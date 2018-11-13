@@ -4,334 +4,335 @@
 #include <cstdint>
 #include <vector>
 #include <exception>
-
 #include <cstring>
+
+#include <iostream>
 
 #include <glm/gtc/matrix_transform.hpp>
 
 using namespace WMB;
 
-struct __attribute__((packed)) LIST
+namespace // anonymous namespace
 {
-	//! offset of the list from the start of the WMB file, in bytes
-	uint32_t offset;
-
-	//! length of the list, in bytes
-	uint32_t length;
-};
-
-struct WMB_HEADER
-{
-	//! "WMB7"
-	std::array<char, 4> version;
-	LIST palettes;// WMB1..6 only
-	LIST legacy1; // WMB1..6 only
-	LIST textures;// textures list
-	LIST legacy2; // WMB1..6 only
-	LIST pvs;     // BSP only
-	LIST bsp_nodes; // BSP only
-	LIST materials; // material names
-	LIST legacy3; // WMB1..6 only
-	LIST legacy4; // WMB1..6 only
-	LIST aabb_hulls; // WMB1..6 only
-	LIST bsp_leafs;  // BSP only
-	LIST bsp_blocks; // BSP only
-	LIST legacy5; // WMB1..6 only
-	LIST legacy6; // WMB1..6 only
-	LIST legacy7; // WMB1..6 only
-	LIST objects; // entities, paths, sounds, etc.
-	LIST lightmaps; // lightmaps for blocks
-	LIST blocks;  // block meshes
-	LIST legacy8; // WMB1..6 only
-	LIST lightmaps_terrain; // lightmaps for terrains
-};
-
-struct __attribute__((packed)) TEXTURE
-{
-	std::array<char, 16> name;   // texture name, max. 16 characters
-	uint32_t width,height; // texture size
-	uint32_t type;	    // texture type: 5 = 8888 RGBA; 4 = 888 RGB; 2 = 565 RGB; 6 = DDS; +8 = mipmaps
-	uint32_t legacy[3]; // always 0
-};
-
-struct MATERIAL_INFO
-{
-	std::array<char, 44> legacy;   // always 0
-	std::array<char, 20> material; // material name from the script, max. 20 characters
-};
-
-static_assert(sizeof(MATERIAL_INFO) == 64);
-
-////////////////////////////////////////////////////////////////////////////////
-
-enum class OBJECT_TYPE : uint32_t
-{
-	Position = 1,
-	Light = 2,
-	OldEntity = 3,
-	Sound = 4,
-	Info = 5,
-	Path = 6,
-	Entity = 7,
-	Region = 8,
-};
-
-
-struct __attribute__((packed)) WMB_INFO
-{
-	// uint32_t  type;      // 5 = INFO
-	std::array<float, 3> origin; // not used
-	float azimuth;   // sun azimuth
-	float elevation; // sun elevation
-	uint32_t  flags;     // always 127 (0x7F)
-	float version;	 // compiler version
-	std::uint8_t  gamma;     // light level at black
-	std::uint8_t  LMapSize;	 // 0,1,2 for lightmap sizes 256x256, 512x512, or 1024x1024
-	uint32_t  unused[2];
-	uint32_t dwSunColor, dwAmbientColor; // color double word, ARGB
-	uint32_t dwFogColor[4];
-};
-
-struct __attribute__((packed)) WMB_POSITION
-{
-	// long  type;      // 1 = POSITION
-	std::array<float, 3> origin;
-	std::array<float, 3> angle;
-	uint32_t  unused[2];
-	std::array<char, 20>  name;
-};
-
-struct __attribute__((packed)) WMB_LIGHT
-{
-	// long  type;      // 2 = LIGHT
-	std::array<float, 3> origin;
-	float red,green,blue; // color in percent, 0..100
-	float range;
-	uint32_t  flags;     // 0 = static, 2 = dynamic
-};
-
-struct __attribute__((packed)) WMB_SOUND
-{
-	// long  type;      // 4 = Sound
-	std::array<float, 3> origin;
-	float volume;
-	float unused[2];
-	uint32_t  range;
-	uint32_t  flags;    // always 0
-	std::array<char,33> filename;
-};
-
-struct __attribute__((packed)) WMB_PATH
-{
-	// long  type;		 // 6 = PATH
-	std::array<char, 20> name;	 // Path name
-	float fNumPoints;// number of nodes
-	uint32_t  unused[3]; // always 0
-	uint32_t  num_edges;
-};
-
-struct __attribute__((packed)) PATH_EDGE
-{
-	float fNode1,fNode2; // node numbers of the edge, starting with 1
-	float fLength;
-	float fBezier;
-	float fWeight;
-	float fSkill;
-};
-
-struct __attribute__((packed)) WMB_ENTITY
-{
-	// long  type;     // 7 = ENTITY
-	std::array<float, 3> origin;
-	std::array<float, 3> angle;
-	std::array<float, 3> scale;
-	std::array<char, 33>  name;
-	std::array<char, 33>  filename;
-	std::array<char, 33>  action;
-	uint8_t unused1;
-	std::array<float, 20> skill;
-	uint32_t  flags;
-	float ambient;
-	float albedo;
-	int32_t  path;    // attached path index, starting with 1, or 0 for no path
-	uint32_t  entity2; // attached entity index, starting with 1, or 0 for no attached entity
-	std::array<char, 33> material;
-	std::array<char, 33> string1;
-	std::array<char, 33> string2;
-	char  unused2[33];
-};
-
-struct __attribute__((packed)) WMB_OLD_ENTITY
-{
-	// long  type;     // 3 = OLD ENTITY
-	std::array<float, 3> origin;
-	std::array<float, 3> angle;
-	std::array<float, 3> scale;
-	std::array<char, 20> name;
-	std::array<char, 13> filename;
-	std::array<char, 20> action;
-	std::array<float, 8> skill;
-	uint32_t  flags;
-	float ambient;
-};
-
-////////////////////////////////////////////////////////////////////////////////
-
-struct __attribute__((packed)) BLOCK
-{
-	std::array<float, 3> fMins; // bounding box
-	std::array<float, 3> fMaxs; // bounding box
-	uint32_t lContent;  // always 0
-	uint32_t lNumVerts; // number of VERTEX structs that follow
-	uint32_t lNumTris;  // number of TRIANGLE structs that follow
-	uint32_t lNumSkins; // number of SKIN structs that follow
-};
-
-struct __attribute__((packed)) VERTEX
-{
-	float x,y,z; // position
-	float tu,tv; // texture coordinates
-	float su,sv; // lightmap coordinates
-};
-
-struct __attribute__((packed)) TRIANGLE
-{
-	uint16_t v1,v2,v3; // indices into the VERTEX array
-	uint16_t skin;  // index into the SKIN array
-	uint32_t unused; // always 0
-};
-
-struct __attribute__((packed)) SKIN
-{
-	uint16_t texture;  // index into the textures list
-	uint16_t lightmap; // index into the lightmaps list
-	uint32_t material; // index into the MATERIAL_INFO array
-	float ambient,albedo;
-	uint32_t flags;     // bit 1 = flat (no lightmap), bit 2 = sky, bit 14 = smooth
-};
-
-struct __attribute__((packed)) LIGHTMAP_TERRAIN
-{
-	uint32_t object; // terrain entity index into the objects list
-	uint32_t width, height; // lightmap size
-};
-
-struct __attribute__((packed)) REGION
-{
-	std::array<float, 3> min;
-	std::array<float, 3> max;
-	uint32_t val_a;
-	uint32_t val_b;
-	std::array<char, 32> name;
-};
-
-struct File
-{
-	FILE * f;
-
-	File(FILE * f) : f(f)
+	struct __attribute__((packed)) LIST
 	{
+		//! offset of the list from the start of the WMB file, in bytes
+		uint32_t offset;
 
-	}
-
-	File(File const &) = delete;
-	File(File &&) = delete;
-
-	~File()
-	{
-		if(f != nullptr)
-			fclose(f);
-	}
-
-	operator bool() const
-	{
-		return (f != nullptr);
-	}
-
-	operator FILE* ()
-	{
-		return f;
-	}
-
-	void seek(long offset, int mode = SEEK_SET)
-	{
-		fseek(f, offset, mode);
-	}
-
-	template<typename T>
-	typename std::enable_if<std::is_trivially_constructible<T>::value, T>::type read()
-	{
-		uint8_t buffer[sizeof(T)];
-
-		size_t offset = 0;
-		while(offset < sizeof(T))
-			offset += fread(&buffer[offset], 1, sizeof(T) - offset, f);
-
-		return reinterpret_cast<T&>(*buffer);
-	}
-
-	std::vector<std::byte> read(size_t const len)
-	{
-		std::vector<std::byte> data(len);
-
-		size_t offset = 0;
-		while(offset < data.size())
-			offset += fread(&data[offset], 1, data.size() - offset, f);
-
-		return data;
-	}
-};
-
-#include <iostream>
-
-glm::vec4 toColor(uint32_t val)
-{
-	auto const select = [](uint32_t val, int byte) -> uint8_t {
-		return (val >> (4 * byte)) & 0xFF;
+		//! length of the list, in bytes
+		uint32_t length;
 	};
-	return glm::vec4(
-		select(val, 3) / 255.0,
-		select(val, 2) / 255.0,
-		select(val, 1) / 255.0,
-		select(val, 0) / 255.0);
-}
 
-template<typename T, size_t N>
-std::string toString(T const (&chars)[N])
-{
-	char buffer[N + 1];
-	strncpy(buffer, chars, N);
-	return std::string(buffer);
-}
+	struct WMB_HEADER
+	{
+		//! "WMB7"
+		std::array<char, 4> version;
+		LIST palettes;// WMB1..6 only
+		LIST legacy1; // WMB1..6 only
+		LIST textures;// textures list
+		LIST legacy2; // WMB1..6 only
+		LIST pvs;     // BSP only
+		LIST bsp_nodes; // BSP only
+		LIST materials; // material names
+		LIST legacy3; // WMB1..6 only
+		LIST legacy4; // WMB1..6 only
+		LIST aabb_hulls; // WMB1..6 only
+		LIST bsp_leafs;  // BSP only
+		LIST bsp_blocks; // BSP only
+		LIST legacy5; // WMB1..6 only
+		LIST legacy6; // WMB1..6 only
+		LIST legacy7; // WMB1..6 only
+		LIST objects; // entities, paths, sounds, etc.
+		LIST lightmaps; // lightmaps for blocks
+		LIST blocks;  // block meshes
+		LIST legacy8; // WMB1..6 only
+		LIST lightmaps_terrain; // lightmaps for terrains
+	};
 
-template<typename T, size_t N>
-std::string toString(std::array<T, N> const & chars)
-{
-	char buffer[N + 1];
-	strncpy(buffer, chars.data(), N);
-	return std::string(buffer);
-}
+	struct __attribute__((packed)) TEXTURE
+	{
+		std::array<char, 16> name;   // texture name, max. 16 characters
+		uint32_t width,height; // texture size
+		uint32_t type;	    // texture type: 5 = 8888 RGBA; 4 = 888 RGB; 2 = 565 RGB; 6 = DDS; +8 = mipmaps
+		uint32_t legacy[3]; // always 0
+	};
 
-glm::vec3 toVec3(float const (&array)[3])
-{
-	return glm::vec3(array[0], array[1], array[2]);
-}
+	struct MATERIAL_INFO
+	{
+		std::array<char, 44> legacy;   // always 0
+		std::array<char, 20> material; // material name from the script, max. 20 characters
+	};
 
-glm::vec3 toVec3(std::array<float,3> const & array)
-{
-	return glm::vec3(array[0], array[1], array[2]);
-}
+	static_assert(sizeof(MATERIAL_INFO) == 64);
 
-Euler toEuler(float const (&array)[3])
-{
-	return Euler { array[0], array[1], array[2] };
-}
+	////////////////////////////////////////////////////////////////////////////////
 
-Euler toEuler(std::array<float, 3> const & array)
-{
-	return Euler { array[0], array[1], array[2] };
-}
+	enum class OBJECT_TYPE : uint32_t
+	{
+		Position = 1,
+		Light = 2,
+		OldEntity = 3,
+		Sound = 4,
+		Info = 5,
+		Path = 6,
+		Entity = 7,
+		Region = 8,
+	};
 
+
+	struct __attribute__((packed)) WMB_INFO
+	{
+		// uint32_t  type;      // 5 = INFO
+		std::array<float, 3> origin; // not used
+		float azimuth;   // sun azimuth
+		float elevation; // sun elevation
+		uint32_t  flags;     // always 127 (0x7F)
+		float version;	 // compiler version
+		std::uint8_t  gamma;     // light level at black
+		std::uint8_t  LMapSize;	 // 0,1,2 for lightmap sizes 256x256, 512x512, or 1024x1024
+		uint32_t  unused[2];
+		uint32_t dwSunColor, dwAmbientColor; // color double word, ARGB
+		uint32_t dwFogColor[4];
+	};
+
+	struct __attribute__((packed)) WMB_POSITION
+	{
+		// long  type;      // 1 = POSITION
+		std::array<float, 3> origin;
+		std::array<float, 3> angle;
+		uint32_t  unused[2];
+		std::array<char, 20>  name;
+	};
+
+	struct __attribute__((packed)) WMB_LIGHT
+	{
+		// long  type;      // 2 = LIGHT
+		std::array<float, 3> origin;
+		float red,green,blue; // color in percent, 0..100
+		float range;
+		uint32_t  flags;     // 0 = static, 2 = dynamic
+	};
+
+	struct __attribute__((packed)) WMB_SOUND
+	{
+		// long  type;      // 4 = Sound
+		std::array<float, 3> origin;
+		float volume;
+		float unused[2];
+		uint32_t  range;
+		uint32_t  flags;    // always 0
+		std::array<char,33> filename;
+	};
+
+	struct __attribute__((packed)) WMB_PATH
+	{
+		// long  type;		 // 6 = PATH
+		std::array<char, 20> name;	 // Path name
+		float fNumPoints;// number of nodes
+		uint32_t  unused[3]; // always 0
+		uint32_t  num_edges;
+	};
+
+	struct __attribute__((packed)) PATH_EDGE
+	{
+		float fNode1,fNode2; // node numbers of the edge, starting with 1
+		float fLength;
+		float fBezier;
+		float fWeight;
+		float fSkill;
+	};
+
+	struct __attribute__((packed)) WMB_ENTITY
+	{
+		// long  type;     // 7 = ENTITY
+		std::array<float, 3> origin;
+		std::array<float, 3> angle;
+		std::array<float, 3> scale;
+		std::array<char, 33>  name;
+		std::array<char, 33>  filename;
+		std::array<char, 33>  action;
+		uint8_t unused1;
+		std::array<float, 20> skill;
+		uint32_t  flags;
+		float ambient;
+		float albedo;
+		int32_t  path;    // attached path index, starting with 1, or 0 for no path
+		uint32_t  entity2; // attached entity index, starting with 1, or 0 for no attached entity
+		std::array<char, 33> material;
+		std::array<char, 33> string1;
+		std::array<char, 33> string2;
+		char  unused2[33];
+	};
+
+	struct __attribute__((packed)) WMB_OLD_ENTITY
+	{
+		// long  type;     // 3 = OLD ENTITY
+		std::array<float, 3> origin;
+		std::array<float, 3> angle;
+		std::array<float, 3> scale;
+		std::array<char, 20> name;
+		std::array<char, 13> filename;
+		std::array<char, 20> action;
+		std::array<float, 8> skill;
+		uint32_t  flags;
+		float ambient;
+	};
+
+	////////////////////////////////////////////////////////////////////////////////
+
+	struct __attribute__((packed)) BLOCK
+	{
+		std::array<float, 3> fMins; // bounding box
+		std::array<float, 3> fMaxs; // bounding box
+		uint32_t lContent;  // always 0
+		uint32_t lNumVerts; // number of VERTEX structs that follow
+		uint32_t lNumTris;  // number of TRIANGLE structs that follow
+		uint32_t lNumSkins; // number of SKIN structs that follow
+	};
+
+	struct __attribute__((packed)) VERTEX
+	{
+		float x,y,z; // position
+		float tu,tv; // texture coordinates
+		float su,sv; // lightmap coordinates
+	};
+
+	struct __attribute__((packed)) TRIANGLE
+	{
+		uint16_t v1,v2,v3; // indices into the VERTEX array
+		uint16_t skin;  // index into the SKIN array
+		uint32_t unused; // always 0
+	};
+
+	struct __attribute__((packed)) SKIN
+	{
+		uint16_t texture;  // index into the textures list
+		uint16_t lightmap; // index into the lightmaps list
+		uint32_t material; // index into the MATERIAL_INFO array
+		float ambient,albedo;
+		uint32_t flags;     // bit 1 = flat (no lightmap), bit 2 = sky, bit 14 = smooth
+	};
+
+	struct __attribute__((packed)) LIGHTMAP_TERRAIN
+	{
+		uint32_t object; // terrain entity index into the objects list
+		uint32_t width, height; // lightmap size
+	};
+
+	struct __attribute__((packed)) REGION
+	{
+		std::array<float, 3> min;
+		std::array<float, 3> max;
+		uint32_t val_a;
+		uint32_t val_b;
+		std::array<char, 32> name;
+	};
+
+	struct File
+	{
+		FILE * f;
+
+		File(FILE * f) : f(f)
+		{
+
+		}
+
+		File(File const &) = delete;
+		File(File &&) = delete;
+
+		~File()
+		{
+			if(f != nullptr)
+				fclose(f);
+		}
+
+		operator bool() const
+		{
+			return (f != nullptr);
+		}
+
+		operator FILE* ()
+		{
+			return f;
+		}
+
+		void seek(long offset, int mode = SEEK_SET)
+		{
+			fseek(f, offset, mode);
+		}
+
+		template<typename T>
+		typename std::enable_if<std::is_trivially_constructible<T>::value, T>::type read()
+		{
+			uint8_t buffer[sizeof(T)];
+
+			size_t offset = 0;
+			while(offset < sizeof(T))
+				offset += fread(&buffer[offset], 1, sizeof(T) - offset, f);
+
+			return reinterpret_cast<T&>(*buffer);
+		}
+
+		std::vector<std::byte> read(size_t const len)
+		{
+			std::vector<std::byte> data(len);
+
+			size_t offset = 0;
+			while(offset < data.size())
+				offset += fread(&data[offset], 1, data.size() - offset, f);
+
+			return data;
+		}
+	};
+
+	glm::vec4 toColor(uint32_t val)
+	{
+		auto const select = [](uint32_t val, int byte) -> uint8_t {
+			return (val >> (4 * byte)) & 0xFF;
+		};
+		return glm::vec4(
+			select(val, 3) / 255.0,
+			select(val, 2) / 255.0,
+			select(val, 1) / 255.0,
+			select(val, 0) / 255.0);
+	}
+
+	template<typename T, size_t N>
+	std::string toString(T const (&chars)[N])
+	{
+		char buffer[N + 1];
+		strncpy(buffer, chars, N);
+		return std::string(buffer);
+	}
+
+	template<typename T, size_t N>
+	std::string toString(std::array<T, N> const & chars)
+	{
+		char buffer[N + 1];
+		strncpy(buffer, chars.data(), N);
+		return std::string(buffer);
+	}
+
+	glm::vec3 toVec3(float const (&array)[3])
+	{
+		return glm::vec3(array[0], array[1], array[2]);
+	}
+
+	glm::vec3 toVec3(std::array<float,3> const & array)
+	{
+		return glm::vec3(array[0], array[1], array[2]);
+	}
+
+	Euler toEuler(float const (&array)[3])
+	{
+		return Euler { array[0], array[1], array[2] };
+	}
+
+	Euler toEuler(std::array<float, 3> const & array)
+	{
+		return Euler { array[0], array[1], array[2] };
+	}
+}
 
 std::optional<Level> WMB::load(std::string const & fileName, LoadOptions const & options)
 {

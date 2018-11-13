@@ -1,3 +1,5 @@
 
-SOURCES += external/WMB/wmb.cpp
-HEADERS += external/WMB/wmb.hpp
+SOURCES += $$PWD/wmb.cpp
+HEADERS += $$PWD/wmb.hpp
+
+INCLUDEPATH += $$PWD
